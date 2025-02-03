@@ -7,9 +7,8 @@ const replicate = new Replicate({
 
 export async function POST(request: Request) {
   if (!process.env.REPLICATE_API_TOKEN) {
-    throw new Error(
-      "The REPLICATE_API_TOKEN environment variable is not set. See README.md for instructions on how to set it."
-    );
+    console.error("REPLICATE_API_TOKEN is not set");
+    return new Response("REPLICATE_API_TOKEN is not set", { status: 500 });
   }
 
   try {
