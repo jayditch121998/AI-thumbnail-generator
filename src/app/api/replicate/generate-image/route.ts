@@ -1,70 +1,53 @@
-import { NextResponse } from "next/server";
 import Replicate from "replicate";
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN,
-});
-
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   if (!process.env.REPLICATE_API_TOKEN) {
-    console.error("REPLICATE_API_TOKEN is not set");
-    return new Response("REPLICATE_API_TOKEN is not set", { status: 500 });
+    return new Response(
+      JSON.stringify({ error: "Replicate API token not configured" }), 
+      { 
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
   }
 
+  const replicate = new Replicate({
+    auth: process.env.REPLICATE_API_TOKEN,
+  });
+
   try {
-    const body = await request.json();
-    const { prompt, image, mask } = body;
-
-    if (!prompt || typeof prompt !== "string") {
-      throw new Error("Prompt is required");
-    }
-
-    let output;
-
-    // If image and mask are provided, use inpainting
-    if (image && mask) {
-      output = await replicate.run(
-        "stability-ai/stable-diffusion-inpainting:c28b92a7ecd66eee4aefcd8a94eb9e7f6c3805d5f06038165407fb5cb355ba67",
-        {
-          input: {
-            prompt,
-            image,
-            mask,
-            num_inference_steps: 30,
-            guidance_scale: 7.5,
-            scheduler: "K_EULER_ANCESTRAL"
-          }
-        }
-      );
-    } else {
-      // Use SDXL for initial image generation
-      output = await replicate.run(
-        "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
-        {
-          input: {
-            prompt,
-            negative_prompt: "low quality, blurry, distorted",
-            width: 1024,
-            height: 1024,
-            num_inference_steps: 30,
-            guidance_scale: 7.5,
-          }
+    const body = await req.json();
+    
+    if (!body.prompt) {
+      return new Response(
+        JSON.stringify({ error: "Prompt is required" }), 
+        { 
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
         }
       );
     }
 
-    if (!output || (Array.isArray(output) && output.length === 0)) {
-      throw new Error("No output received from Replicate API");
-    }
-
-    const resultImageUrl = Array.isArray(output) ? output[0] : output;
-    return NextResponse.json({ imageUrl: resultImageUrl });
-
+    const output = await replicate.run(
+      "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
+      {
+        input: {
+          prompt: body.prompt,
+          width: 1280,
+          height: 720,
+        }
+      }
+    );
+    
+    return Response.json(output);
   } catch (error) {
-    console.error("Error:", error);
-    return NextResponse.json(
-      { error: "Failed to generate or edit image", details: (error as Error).message },
-      { status: 500 }
+    console.error("Replicate API error:", error);
+    return new Response(
+      JSON.stringify({ error: "Error generating image" }), 
+      { 
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      }
     );
   }
 }
