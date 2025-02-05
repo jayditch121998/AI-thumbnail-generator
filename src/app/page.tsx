@@ -11,6 +11,18 @@ interface ImageVersion {
   editedRegion?: { x: number; y: number; width: number; height: number };
 }
 
+interface YouTubeResult {
+  title: string;
+  thumbnail: {
+    static: string;
+  };
+  link: string;
+  channel: {
+    name: string;
+  };
+  views: number;
+}
+
 export default function Home() {
   const [prompt, setPrompt] = useState('')
   const [editPrompt, setEditPrompt] = useState('')
@@ -23,6 +35,8 @@ export default function Home() {
   const containerRef = useRef<HTMLDivElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [youtubeResults, setYoutubeResults] = useState<YouTubeResult[]>([])
+  const [showYoutubeResults, setShowYoutubeResults] = useState(false)
 
   const generateImage = async () => {
     setLoading(true)
@@ -56,7 +70,7 @@ export default function Home() {
   }
 
   const handleEditRegion = async () => {
-    if (!selectedImage || !selection || !editPrompt || !previewRef.current) return;
+   if (!selectedImage || !selection || !editPrompt || !previewRef.current) return;
     
     setLoading(true)
     try {
@@ -138,28 +152,47 @@ export default function Home() {
     
     setLoading(true)
     try {
-      const response = await fetch('/api/replicate/generate-image', {
+      const response = await fetch('/api/youtube/search', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
-          prompt: `A YouTube thumbnail for a video about "${searchQuery}". Professional, eye-catching, high quality` 
-        }),
-      })
-      const data = await response.json()
-      if (data) {
-        const newVersion: ImageVersion = {
-          url: data[0],
-          timestamp: Date.now(),
-        }
-        setGeneratedImages(prev => [...prev, newVersion])
-        setSelectedImage(data[0])
-      }
+        body: JSON.stringify({ query: searchQuery }),
+      });
+      
+      const data = await response.json();
+      setYoutubeResults(data);
+      setShowYoutubeResults(true);
     } catch (error) {
-      console.error('Error finding thumbnail:', error)
+      console.error('Error finding videos:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleEditWithAI = async (thumbnailUrl: string) => {
+    try {
+      // First, proxy the image through our API
+      const proxyResponse = await fetch('/api/proxy/image', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ imageUrl: thumbnailUrl }),
+      });
+      
+      const { dataUrl } = await proxyResponse.json();
+      
+      // Add to history when selecting a YouTube thumbnail
+      const newVersion: ImageVersion = {
+        url: dataUrl, // Use the data URL instead of the direct URL
+        timestamp: Date.now(),
+      }
+      setGeneratedImages(prev => [...prev, newVersion]);
+      setSelectedImage(dataUrl);
+      setShowYoutubeResults(false);
+    } catch (error) {
+      console.error('Error processing thumbnail:', error);
     }
   }
 
@@ -168,6 +201,32 @@ export default function Home() {
       <div className="max-w-7xl mx-auto">
         <h1 className="text-3xl font-bold mb-8 text-gray-800">YouTube Thumbnail Generator</h1>
         
+        {/* Quick Find Search - Moved to top */}
+        <div className="mb-8 bg-white p-6 rounded-lg shadow-sm">
+          <div className="max-w-2xl mx-auto">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Search YouTube Videos
+            </label>
+            <div className="flex gap-4">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Enter your video topic..."
+                className="flex-1 p-3 border border-gray-300 rounded-lg text-gray-800 bg-white"
+                onKeyDown={(e) => e.key === 'Enter' && findThumbnail()}
+              />
+              <button
+                onClick={findThumbnail}
+                disabled={loading || !searchQuery}
+                className="px-6 py-2 bg-purple-600 text-white rounded-lg disabled:opacity-50 hover:bg-purple-700 transition-colors whitespace-nowrap"
+              >
+                {loading ? 'Searching...' : 'Search Videos'}
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-[300px_1fr_300px] gap-8">
           {/* Left Sidebar - Controls */}
           <div className="space-y-6">
@@ -179,94 +238,99 @@ export default function Home() {
 
             {/* Generate Section */}
             <div className="bg-white p-6 rounded-lg shadow-sm">
-              <h2 className="text-xl font-semibold mb-4 text-gray-800">Generate Thumbnail</h2>
+              <h2 className="text-xl font-semibold mb-4 text-gray-800">Generate Custom</h2>
               <div className="space-y-4">
-                {/* Quick Find */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Quick Find
-                  </label>
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Enter your video topic..."
-                    className="w-full p-3 border border-gray-300 rounded-lg text-gray-800 bg-white"
-                  />
-                  <button
-                    onClick={findThumbnail}
-                    disabled={loading || !searchQuery}
-                    className="mt-2 w-full px-4 py-2 bg-purple-600 text-white rounded-lg disabled:opacity-50 hover:bg-purple-700 transition-colors"
-                  >
-                    {loading ? 'Finding...' : 'Find Thumbnail'}
-                  </button>
-                </div>
-
-                {/* Custom Prompt */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Custom Prompt
-                  </label>
-                  <textarea
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="Describe your thumbnail in detail..."
-                    className="w-full p-3 border border-gray-300 rounded-lg h-24 resize-none text-gray-800 bg-white"
-                  />
-                  <button
-                    onClick={generateImage}
-                    disabled={loading || !prompt}
-                    className="mt-2 w-full px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700 transition-colors"
-                  >
-                    {loading ? 'Generating...' : 'Generate Custom'}
-                  </button>
-                </div>
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Describe your thumbnail in detail..."
+                  className="w-full p-3 border border-gray-300 rounded-lg h-24 resize-none text-gray-800 bg-white"
+                />
+                <button
+                  onClick={generateImage}
+                  disabled={loading || !prompt}
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-50 hover:bg-blue-700 transition-colors"
+                >
+                  {loading ? 'Generating...' : 'Generate Custom'}
+                </button>
               </div>
             </div>
           </div>
 
-          {/* Center - Preview & Edit */}
+          {/* Center - Preview & Edit or YouTube Results */}
           <div className="bg-white p-6 rounded-lg shadow-sm">
-            {selectedImage ? (
-              <>
-                <h2 className="text-xl font-semibold mb-4 text-gray-800">Preview & Select Region</h2>
-                <ImageSelector 
-                  ref={previewRef}
-                  imageUrl={selectedImage} 
-                  onSelectionChange={handleSelectionChange}
-                />
-                {selection && showEditInput && (
-                  <div className="mt-4 space-y-4">
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <h3 className="font-medium text-gray-700 mb-2">Selected Region</h3>
-                      <p className="text-sm text-gray-600">
-                        Position: (x: {Math.round(selection.x)}, y: {Math.round(selection.y)})
-                        <br />
-                        Size: {Math.round(selection.width)} × {Math.round(selection.height)}
-                      </p>
+            {showYoutubeResults ? (
+              <div className="space-y-6">
+                <h2 className="text-xl font-semibold mb-4 text-gray-800">YouTube Results</h2>
+                <div className="grid grid-cols-2 gap-4">
+                  {youtubeResults.map((result, index) => (
+                    <div key={index} className="border rounded-lg p-4 space-y-3">
+                      <div className="relative aspect-video">
+                        <Image
+                          src={result.thumbnail.static}
+                          alt={result.title}
+                          fill
+                          className="object-cover rounded-lg"
+                          unoptimized
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <h3 className="font-medium text-sm line-clamp-2">{result.title}</h3>
+                        <p className="text-xs text-gray-600">{result.channel.name}</p>
+                        <p className="text-xs text-gray-600">{result.views.toLocaleString()} views</p>
+                        <button
+                          onClick={() => handleEditWithAI(result.thumbnail.static)}
+                          className="w-full px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
+                        >
+                          Edit with AI
+                        </button>
+                      </div>
                     </div>
-                    <div>
-                      <textarea
-                        value={editPrompt}
-                        onChange={(e) => setEditPrompt(e.target.value)}
-                        placeholder="Describe how to edit this region..."
-                        className="w-full p-3 border border-gray-300 rounded-lg h-20 resize-none text-gray-800 bg-white"
-                      />
-                      <button
-                        onClick={handleEditRegion}
-                        disabled={loading || !editPrompt}
-                        className="mt-2 w-full px-4 py-2 bg-green-600 text-white rounded-lg disabled:opacity-50 hover:bg-green-700 transition-colors"
-                      >
-                        {loading ? 'Editing...' : 'Edit Region'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="h-full flex items-center justify-center text-gray-500">
-                <p>Upload or generate an image to start editing</p>
+                  ))}
+                </div>
               </div>
+            ) : (
+              selectedImage ? (
+                <>
+                  <h2 className="text-xl font-semibold mb-4 text-gray-800">Preview & Select Region</h2>
+                  <ImageSelector 
+                    ref={previewRef}
+                    imageUrl={selectedImage} 
+                    onSelectionChange={handleSelectionChange}
+                  />
+                  {selection && showEditInput && (
+                    <div className="mt-4 space-y-4">
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <h3 className="font-medium text-gray-700 mb-2">Selected Region</h3>
+                        <p className="text-sm text-gray-600">
+                          Position: (x: {Math.round(selection.x)}, y: {Math.round(selection.y)})
+                          <br />
+                          Size: {Math.round(selection.width)} × {Math.round(selection.height)}
+                        </p>
+                      </div>
+                      <div>
+                        <textarea
+                          value={editPrompt}
+                          onChange={(e) => setEditPrompt(e.target.value)}
+                          placeholder="Describe how to edit this region..."
+                          className="w-full p-3 border border-gray-300 rounded-lg h-20 resize-none text-gray-800 bg-white"
+                        />
+                        <button
+                          onClick={handleEditRegion}
+                          disabled={loading || !editPrompt}
+                          className="mt-2 w-full px-4 py-2 bg-green-600 text-white rounded-lg disabled:opacity-50 hover:bg-green-700 transition-colors"
+                        >
+                          {loading ? 'Editing...' : 'Edit Region'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="h-full flex items-center justify-center text-gray-500">
+                  <p>Upload or generate an image to start editing</p>
+                </div>
+              )
             )}
           </div>
 
