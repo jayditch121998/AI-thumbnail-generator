@@ -74,68 +74,40 @@ export default function ImageEditor() {
     
     setIsGenerating(true);
     try {
-      // Create a canvas to generate the mask
-      const canvas = document.createElement('canvas');
-      const img = document.createElement('img');
-      img.crossOrigin = "anonymous";
-      
-      // Wait for the image to load to get its actual dimensions
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error('Failed to load image'));
-        img.src = currentImage + (currentImage.includes('?') ? '&' : '?') + 'timestamp=' + Date.now();
-      });
+      // Get the actual image dimensions
+      const imageElement = imageRef.current?.querySelector('img');
+      if (!imageElement) return;
 
-      // Set canvas size to match the actual image dimensions
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      // Calculate the scale factor between the displayed image and the actual image
       const rect = imageRef.current?.getBoundingClientRect();
       if (!rect) return;
-      const scaleX = img.naturalWidth / rect.width;
-      const scaleY = img.naturalHeight / rect.height;
 
-      // Draw white rectangle on black background for the mask
-      ctx.fillStyle = 'black';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = 'white';
-      ctx.fillRect(
-        selection.x * scaleX,
-        selection.y * scaleY,
-        selection.width * scaleX,
-        selection.height * scaleY
-      );
+      // Calculate scale factors
+      const scaleX = imageElement.naturalWidth / rect.width;
+      const scaleY = imageElement.naturalHeight / rect.height;
 
-      // Create a new canvas for the input image
-      const imageCanvas = document.createElement('canvas');
-      imageCanvas.width = img.naturalWidth;
-      imageCanvas.height = img.naturalHeight;
-      const imageCtx = imageCanvas.getContext('2d');
-      if (!imageCtx) return;
-      imageCtx.drawImage(img, 0, 0);
+      // Scale the selection to match actual image dimensions
+      const scaledSelection = {
+        x: Math.round(selection.x * scaleX),
+        y: Math.round(selection.y * scaleY),
+        width: Math.round(selection.width * scaleX),
+        height: Math.round(selection.height * scaleY)
+      };
 
-      // Get data URLs directly from the canvases
-      const imageDataUrl = imageCanvas.toDataURL('image/png');
-      const maskDataUrl = canvas.toDataURL('image/png');
-
-      const response = await fetch("/api/replicate/generate-image", {
+      const response = await fetch("/api/replicate/edit-image", {
         method: "POST",
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          imageUrl: currentImage,
           prompt: editPrompt,
-          image: imageDataUrl,
-          mask: maskDataUrl,
+          selection: scaledSelection,
         }),
       });
-      
+
       const data = await response.json();
-      
+      console.log('Edit response:', data);
+
       if (data.error) {
         throw new Error(data.details || data.error);
       }
@@ -147,7 +119,7 @@ export default function ImageEditor() {
           timestamp: new Date(),
           prompt: editPrompt,
         };
-        setVersions([...versions, newVersion]);
+        setVersions(prev => [...prev, newVersion]);
         setCurrentImage(data.imageUrl);
         setSelection(null);
         setEditPrompt("");
@@ -168,9 +140,22 @@ export default function ImageEditor() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
+    // Get the actual image element
+    const imageElement = imageRef.current.querySelector('img');
+    if (!imageElement) return;
+
+    // Calculate scale factors
+    const scaleX = imageElement.naturalWidth / rect.width;
+    const scaleY = imageElement.naturalHeight / rect.height;
+    
     setIsSelecting(true);
     setStartPos({ x, y });
-    setSelection({ x, y, width: 0, height: 0 });
+    setSelection({ 
+      x: x * scaleX, 
+      y: y * scaleY, 
+      width: 0, 
+      height: 0 
+    });
   };
 
   const updateSelection = useCallback((e: React.MouseEvent) => {
@@ -178,14 +163,23 @@ export default function ImageEditor() {
     if (!isSelecting || !startPos || !imageRef.current) return;
 
     const rect = imageRef.current.getBoundingClientRect();
-    const currentX = e.clientX - rect.left;
-    const currentY = e.clientY - rect.top;
+    const imageElement = imageRef.current.querySelector('img');
+    if (!imageElement) return;
+
+    // Calculate scale factors
+    const scaleX = imageElement.naturalWidth / rect.width;
+    const scaleY = imageElement.naturalHeight / rect.height;
+
+    const currentX = (e.clientX - rect.left) * scaleX;
+    const currentY = (e.clientY - rect.top) * scaleY;
+    const startX = startPos.x * scaleX;
+    const startY = startPos.y * scaleY;
 
     setSelection({
-      x: Math.min(startPos.x, currentX),
-      y: Math.min(startPos.y, currentY),
-      width: Math.abs(currentX - startPos.x),
-      height: Math.abs(currentY - startPos.y),
+      x: Math.min(startX, currentX) / scaleX,
+      y: Math.min(startY, currentY) / scaleY,
+      width: Math.abs(currentX - startX) / scaleX,
+      height: Math.abs(currentY - startY) / scaleY,
     });
   }, [isSelecting, startPos]);
 

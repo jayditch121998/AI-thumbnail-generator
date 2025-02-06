@@ -115,14 +115,15 @@ export default function Home() {
       }
 
       const data = await response.json();
-      if (data && data[0]) {
+      console.log('data: ', data);
+      if (data.imageUrl) {
         const newVersion: ImageVersion = {
-          url: data[0],
+          url: data.imageUrl,
           timestamp: Date.now(),
           editedRegion: selection
         };
         setGeneratedImages(prev => [...prev, newVersion]);
-        setSelectedImage(data[0]);
+        setSelectedImage(data.imageUrl);
         setShowEditInput(false);
         setEditPrompt('');
       } else {
