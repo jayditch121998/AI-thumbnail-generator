@@ -1,10 +1,11 @@
 import Replicate from "replicate";
-import { createCanvas, loadImage } from 'canvas';
 import sharp from 'sharp';
 import fetch from 'node-fetch';
+import logger from '../../../lib/logger';
 
 export async function POST(req: Request) {
   if (!process.env.REPLICATE_API_TOKEN) {
+    logger.error('Replicate API token not configured');
     return new Response(
       JSON.stringify({ error: "Replicate API token not configured" }), 
       { status: 401, headers: { 'Content-Type': 'application/json' } }
@@ -16,10 +17,10 @@ export async function POST(req: Request) {
   });
 
   try {
-    const { imageUrl, prompt, selection } = await req.json();
-    console.log('Received request:', { prompt, selection });
+    const { imageUrl, prompt, maskDataUrl } = await req.json();
+    logger.info('Processing image edit request', { prompt });
 
-    // Get original image dimensions and data
+    // Get original image data
     let originalBuffer;
     try {
       if (imageUrl.startsWith('data:image/')) {
@@ -33,8 +34,8 @@ export async function POST(req: Request) {
         const arrayBuffer = await response.arrayBuffer();
         originalBuffer = Buffer.from(arrayBuffer);
       }
-    } catch (error) {
-      console.error('Error processing image:', error);
+    } catch (error: any) {
+      logger.error('Error processing input image', { error: error.message });
       throw new Error('Failed to process input image');
     }
 
@@ -42,66 +43,77 @@ export async function POST(req: Request) {
     const originalMetadata = await sharp(originalBuffer).metadata();
     const originalWidth = originalMetadata.width;
     const originalHeight = originalMetadata.height;
+    const aspectRatio = originalWidth! / originalHeight!;
 
-    // Resize if dimensions are too large
+    // Calculate dimensions that maintain aspect ratio and meet minimum size
+    let width = originalWidth!;
+    let height = originalHeight!;
+
+    // Ensure minimum dimensions while maintaining aspect ratio
+    if (width < 256 || height < 256) {
+      if (width < height) {
+        width = 256;
+        height = Math.round(width / aspectRatio);
+        if (height < 256) {
+          height = 256;
+          width = Math.round(height * aspectRatio);
+        }
+      } else {
+        height = 256;
+        width = Math.round(height * aspectRatio);
+        if (width < 256) {
+          width = 256;
+          height = Math.round(width / aspectRatio);
+        }
+      }
+    }
+
+    // Resize if dimensions need adjustment
     let processedBuffer = originalBuffer;
-    if (originalWidth! > 1024 || originalHeight! > 1024) {
+    if (width !== originalWidth || height !== originalHeight) {
+      logger.info('Resizing image to meet minimum dimensions', { 
+        originalWidth, 
+        originalHeight,
+        newWidth: width,
+        newHeight: height
+      });
       processedBuffer = await sharp(originalBuffer)
-        .resize(1024, 1024, { fit: 'inside' })
+        .resize(width, height, { fit: 'fill' })
         .toBuffer();
     }
 
-    // Convert to base64
-    const base64 = processedBuffer.toString('base64');
-    const processedImageUrl = `data:image/png;base64,${base64}`;
+    // Process mask data URL and ensure it matches the image dimensions
+    let maskBuffer;
+    try {
+      const maskBase64Data = maskDataUrl.split(',')[1];
+      const rawMaskBuffer = Buffer.from(maskBase64Data, 'base64');
+      
+      // Resize mask to match the processed image dimensions
+      maskBuffer = await sharp(rawMaskBuffer)
+        .resize(width, height, { fit: 'fill' })
+        .toBuffer();
+    } catch (error: any) {
+      logger.error('Error processing mask', { error: error.message });
+      throw new Error('Failed to process mask');
+    }
 
-    // Create mask with processed dimensions
-    const processedMetadata = await sharp(processedBuffer).metadata();
-    const maskCanvas = createCanvas(processedMetadata.width!, processedMetadata.height!);
-    const maskCtx = maskCanvas.getContext('2d');
-
-    // Scale selection to match processed dimensions
-    const scaleX = processedMetadata.width! / originalWidth!;
-    const scaleY = processedMetadata.height! / originalHeight!;
-    const scaledSelection = {
-      x: Math.round(selection.x * scaleX),
-      y: Math.round(selection.y * scaleY),
-      width: Math.round(selection.width * scaleX),
-      height: Math.round(selection.height * scaleY)
-    };
-
-    // Create black background (means "keep this area")
-    maskCtx.fillStyle = 'black';
-    maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
-
-    // Fill selection area with white (means "edit this area")
-    maskCtx.fillStyle = 'white';
-    maskCtx.fillRect(
-      scaledSelection.x,
-      scaledSelection.y,
-      scaledSelection.width,
-      scaledSelection.height
-    );
-
-    // Convert mask to base64
-    const maskDataUrl = maskCanvas.toDataURL('image/png');
-
-    console.log('Processing with dimensions:', {
-      originalWidth,
-      originalHeight,
-      processedWidth: processedMetadata.width,
-      processedHeight: processedMetadata.height,
-      selection: scaledSelection
-    });
+    // Convert processed image and mask to base64
+    const processedBase64 = processedBuffer.toString('base64');
+    const processedImageUrl = `data:image/png;base64,${processedBase64}`;
+    const processedMaskBase64 = maskBuffer.toString('base64');
+    const processedMaskUrl = `data:image/png;base64,${processedMaskBase64}`;
 
     try {
+      logger.info('Starting Replicate API call', { prompt });
+      console.log('maskDataUrl: ', maskDataUrl);
+      console.log('processedImageUrl: ', processedImageUrl);
       const output = await replicate.run(
-        "stability-ai/stable-diffusion-inpainting:c28b92a7ecd66eee4aefcd8a94eb9e7f6c3805d5f06038165407fb5cb355ba67",
+        "black-forest-labs/flux-fill-pro",
         {
           input: {
             prompt: prompt,
             image: processedImageUrl,
-            mask: maskDataUrl,
+            mask: processedMaskUrl,
             num_outputs: 1,
             guidance_scale: 7.5,
             num_inference_steps: 50,
@@ -111,15 +123,21 @@ export async function POST(req: Request) {
         }
       );
 
-      console.log('Replicate response:', output);
+      logger.info('Replicate API call successful', { output });
 
       // Get the output URL
       const outputUrl = Array.isArray(output) ? output[0] : output;
-      if (!outputUrl) throw new Error('No output received from model');
+      if (!outputUrl) {
+        logger.error('No output received from model');
+        throw new Error('No output received from model');
+      }
 
       // Fetch and resize the output image to match original dimensions
       const outputResponse = await fetch(outputUrl);
-      if (!outputResponse.ok) throw new Error('Failed to fetch output image');
+      if (!outputResponse.ok) {
+        logger.error('Failed to fetch output image', { status: outputResponse.status });
+        throw new Error('Failed to fetch output image');
+      }
       
       const outputBuffer = Buffer.from(await outputResponse.arrayBuffer());
       const resizedOutputBuffer = await sharp(outputBuffer)
@@ -132,9 +150,11 @@ export async function POST(req: Request) {
       const resizedOutputBase64 = resizedOutputBuffer.toString('base64');
       const finalImageUrl = `data:image/png;base64,${resizedOutputBase64}`;
 
+      logger.info('Image edit completed successfully');
       return Response.json({ imageUrl: finalImageUrl });
     } catch (error) {
-      if (error.message?.includes('NSFW')) {
+      if (error instanceof Error && error.message.includes('NSFW')) {
+        logger.warn('NSFW content detected', { prompt });
         return new Response(
           JSON.stringify({ 
             error: "NSFW content detected",
@@ -146,8 +166,11 @@ export async function POST(req: Request) {
       throw error;
     }
 
-  } catch (error) {
-    console.error("Replicate API error:", error);
+  } catch (error: any) {
+    logger.error('Image editing failed', { 
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
     return new Response(
       JSON.stringify({ 
         error: "Error editing image",
