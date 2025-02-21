@@ -35,39 +35,15 @@ const BrushSelector = forwardRef<HTMLDivElement, BrushSelectorProps>(({ imageUrl
     const imageElement = containerRef.current.querySelector('img')
     if (!imageElement) return
 
-    // Get image dimensions and calculate scaled dimensions
+    // Get image dimensions and use original dimensions
     const imgWidth = imageElement.naturalWidth
     const imgHeight = imageElement.naturalHeight
-    const aspectRatio = imgWidth / imgHeight
 
-    // Calculate dimensions that maintain aspect ratio and meet minimum size
-    let width = imgWidth
-    let height = imgHeight
-
-    // Ensure minimum dimensions while maintaining aspect ratio
-    if (width < 256 || height < 256) {
-      if (width < height) {
-        width = 256
-        height = Math.round(width / aspectRatio)
-        if (height < 256) {
-          height = 256
-          width = Math.round(height * aspectRatio)
-        }
-      } else {
-        height = 256
-        width = Math.round(height * aspectRatio)
-        if (width < 256) {
-          width = 256
-          height = Math.round(width / aspectRatio)
-        }
-      }
-    }
-
-    // Set both canvases to the calculated size
-    canvas.width = width
-    canvas.height = height
-    displayCanvas.width = width
-    displayCanvas.height = height
+    // Set both canvases to the original image size
+    canvas.width = imgWidth
+    canvas.height = imgHeight
+    displayCanvas.width = imgWidth
+    displayCanvas.height = imgHeight
     
     // Set up mask context (invisible canvas for AI)
     context.fillStyle = '#FFFFFF'

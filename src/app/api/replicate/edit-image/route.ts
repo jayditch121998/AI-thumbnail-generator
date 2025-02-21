@@ -43,14 +43,14 @@ export async function POST(req: Request) {
     const originalMetadata = await sharp(originalBuffer).metadata();
     const originalWidth = originalMetadata.width;
     const originalHeight = originalMetadata.height;
-    const aspectRatio = originalWidth! / originalHeight!;
 
-    // Calculate dimensions that maintain aspect ratio and meet minimum size
+    let processedBuffer = originalBuffer;
     let width = originalWidth!;
     let height = originalHeight!;
 
-    // Ensure minimum dimensions while maintaining aspect ratio
+    // Only resize if image is smaller than 256x256
     if (width < 256 || height < 256) {
+      const aspectRatio = width / height;
       if (width < height) {
         width = 256;
         height = Math.round(width / aspectRatio);
@@ -66,11 +66,7 @@ export async function POST(req: Request) {
           height = Math.round(width / aspectRatio);
         }
       }
-    }
 
-    // Resize if dimensions need adjustment
-    let processedBuffer = originalBuffer;
-    if (width !== originalWidth || height !== originalHeight) {
       logger.info('Resizing image to meet minimum dimensions', { 
         originalWidth, 
         originalHeight,
@@ -78,7 +74,7 @@ export async function POST(req: Request) {
         newHeight: height
       });
       processedBuffer = await sharp(originalBuffer)
-        .resize(width, height, { fit: 'fill' })
+        .resize(width, height, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
         .toBuffer();
     }
 
@@ -88,10 +84,14 @@ export async function POST(req: Request) {
       const maskBase64Data = maskDataUrl.split(',')[1];
       const rawMaskBuffer = Buffer.from(maskBase64Data, 'base64');
       
-      // Resize mask to match the processed image dimensions
-      maskBuffer = await sharp(rawMaskBuffer)
-        .resize(width, height, { fit: 'fill' })
-        .toBuffer();
+      // Only resize mask if we had to resize the image
+      if (width !== originalWidth || height !== originalHeight) {
+        maskBuffer = await sharp(rawMaskBuffer)
+          .resize(width, height, { fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 1 } })
+          .toBuffer();
+      } else {
+        maskBuffer = rawMaskBuffer;
+      }
     } catch (error: any) {
       logger.error('Error processing mask', { error: error.message });
       throw new Error('Failed to process mask');
@@ -105,10 +105,7 @@ export async function POST(req: Request) {
 
     try {
       logger.info('Starting Replicate API call', { prompt });
-      console.log('maskDataUrl: ', maskDataUrl);
-      console.log('processedImageUrl: ', processedImageUrl);
       const output = await replicate.run(
-        // "black-forest-labs/flux-fill-pro",
         "ideogram-ai/ideogram-v2-turbo",
         {
           input: {
@@ -118,7 +115,6 @@ export async function POST(req: Request) {
             num_outputs: 1,
             guidance_scale: 7.5,
             num_inference_steps: 50,
-            // negative_prompt: "nsfw, nude, naked, sex, porn, explicit, offensive",
             safety_checker: true
           }
         }
@@ -133,7 +129,7 @@ export async function POST(req: Request) {
         throw new Error('No output received from model');
       }
 
-      // Fetch and resize the output image to match original dimensions
+      // Fetch the output image but don't resize it
       const outputResponse = await fetch(outputUrl);
       if (!outputResponse.ok) {
         logger.error('Failed to fetch output image', { status: outputResponse.status });
@@ -141,15 +137,10 @@ export async function POST(req: Request) {
       }
       
       const outputBuffer = Buffer.from(await outputResponse.arrayBuffer());
-      const resizedOutputBuffer = await sharp(outputBuffer)
-        .resize(originalWidth, originalHeight, {
-          fit: 'fill'
-        })
-        .toBuffer();
-
-      // Convert back to base64
-      const resizedOutputBase64 = resizedOutputBuffer.toString('base64');
-      const finalImageUrl = `data:image/png;base64,${resizedOutputBase64}`;
+      
+      // Convert directly to base64 without resizing
+      const outputBase64 = outputBuffer.toString('base64');
+      const finalImageUrl = `data:image/png;base64,${outputBase64}`;
 
       logger.info('Image edit completed successfully');
       return Response.json({ imageUrl: finalImageUrl });
