@@ -108,7 +108,8 @@ export async function POST(req: Request) {
       console.log('maskDataUrl: ', maskDataUrl);
       console.log('processedImageUrl: ', processedImageUrl);
       const output = await replicate.run(
-        "black-forest-labs/flux-fill-pro",
+        // "black-forest-labs/flux-fill-pro",
+        "ideogram-ai/ideogram-v2-turbo",
         {
           input: {
             prompt: prompt,
@@ -117,7 +118,7 @@ export async function POST(req: Request) {
             num_outputs: 1,
             guidance_scale: 7.5,
             num_inference_steps: 50,
-            negative_prompt: "nsfw, nude, naked, sex, porn, explicit, offensive",
+            // negative_prompt: "nsfw, nude, naked, sex, porn, explicit, offensive",
             safety_checker: true
           }
         }

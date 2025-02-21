@@ -70,10 +70,10 @@ const BrushSelector = forwardRef<HTMLDivElement, BrushSelectorProps>(({ imageUrl
     displayCanvas.height = height
     
     // Set up mask context (invisible canvas for AI)
-    context.fillStyle = '#000000'
-    context.fillRect(0, 0, canvas.width, canvas.height)
-    context.strokeStyle = '#FFFFFF'
     context.fillStyle = '#FFFFFF'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.strokeStyle = '#000000'
+    context.fillStyle = '#000000'
     context.lineWidth = brushSize
     context.lineCap = 'round'
     context.lineJoin = 'round'
@@ -182,6 +182,7 @@ const BrushSelector = forwardRef<HTMLDivElement, BrushSelectorProps>(({ imageUrl
     setLastPoint(null)
 
     if (hasSelection && onSelectionComplete && canvasRef.current) {
+      // No need to invert the mask anymore since we're drawing in black
       const maskDataUrl = canvasRef.current.toDataURL('image/png')
       onSelectionComplete(maskDataUrl)
     }
@@ -190,10 +191,10 @@ const BrushSelector = forwardRef<HTMLDivElement, BrushSelectorProps>(({ imageUrl
   const clearCanvas = () => {
     if (!canvasRef.current || !displayCanvasRef.current || !contextRef.current || !displayContextRef.current) return
 
-    // Clear mask canvas (black background for AI)
-    contextRef.current.fillStyle = '#000000'
-    contextRef.current.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+    // Clear mask canvas (white background)
     contextRef.current.fillStyle = '#FFFFFF'
+    contextRef.current.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+    contextRef.current.fillStyle = '#000000'
 
     // Clear display canvas (transparent for user)
     displayContextRef.current.clearRect(0, 0, displayCanvasRef.current.width, displayCanvasRef.current.height)
